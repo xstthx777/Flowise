@@ -16,16 +16,25 @@ vol_pause_s: 120
 max_daily_loss_usd: 20    # дневной убыток, после которого бот всё закрывает и останавливается
 min_health_ratio: 0.5     # maintenance health / equity; ниже — закрыть позиции
 
+# Фандинг (ставка за 24ч). Если лонги платят больше 0.05%/сутки — не набираем лонг (и наоборот).
+funding_max_daily: 0.0005
+fills_sync_s: 60          # как часто подтягивать свои сделки для отчёта
+reject_pause_s: 300       # пауза рынка после 3 отказов подряд (выходные: soft_reduce_only)
+
+# Защита от случайного запуска на реальных деньгах:
+# mainnet + dry_run: false работает ТОЛЬКО если здесь true
+mainnet_live_confirm: false
+
 markets:
   - symbol: BTC-PERP
-    order_size_usd: 50     # размер каждой котировки
+    order_size_usd: 120    # размер котировки в $ (минимум биржи — 100$)
     offset_bps: 4          # отступ от mid (0.04%)
-    max_position_usd: 150  # дальше — котируем только на сокращение позиции
-    hard_position_usd: 300 # тут — принудительное закрытие
+    max_position_usd: 250  # дальше — котируем только на сокращение позиции
+    hard_position_usd: 500 # тут — принудительное закрытие
     skew_bps: 3            # сдвиг котировок при полном инвентаре
 #  - symbol: ETH-PERP
-#    order_size_usd: 50
+#    order_size_usd: 120
 #    offset_bps: 5
-#    max_position_usd: 150
-#    hard_position_usd: 300
+#    max_position_usd: 250
+#    hard_position_usd: 500
 #    skew_bps: 3

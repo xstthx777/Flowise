@@ -104,6 +104,38 @@ class Exchange:
     def fee_rates(self):
         return self.client.subaccount.get_subaccount_fee_rates(self.sub_hex)
 
+    def funding_rate_daily(self, product_id: int) -> Decimal:
+        """24-часовая ставка фандинга (доля, 0.0003 = 0.03%/сутки). >0 — лонги платят шортам."""
+        fr = self.client.context.indexer_client.get_perp_funding_rate(product_id)
+        return from_x18(fr.funding_rate_x18)
+
+    def recent_fills(self, limit: int = 100) -> list[dict]:
+        """Последние исполнения субаккаунта из индексатора (новые первыми)."""
+        from nado_protocol.indexer_client.types.query import IndexerMatchesParams
+
+        res = self.client.context.indexer_client.get_matches(
+            IndexerMatchesParams(subaccounts=[self.sub_hex], limit=limit)
+        )
+        ts = {t.submission_idx: int(t.timestamp) for t in res.txs if t.timestamp}
+        pid = {}
+        for t in res.txs:
+            tx = t.tx.model_dump() if hasattr(t.tx, "model_dump") else t.tx
+            mo = tx.get("match_orders") if isinstance(tx, dict) else None
+            if mo:
+                pid[t.submission_idx] = int(mo["product_id"])
+        out = []
+        for m in res.matches:
+            out.append({
+                "idx": int(m.submission_idx),
+                "digest": m.digest,
+                "ts": ts.get(m.submission_idx),
+                "product_id": pid.get(m.submission_idx),
+                "base": float(from_x18(m.base_filled)),
+                "quote": float(from_x18(m.quote_filled)),
+                "fee": float(from_x18(m.fee)),  # >0 заплатили, <0 получили ребейт
+            })
+        return out
+
     # ---------- торговля ----------
     def place_post_only(self, spec: MarketSpec, price: Decimal, size: Decimal, ttl_s: int):
         """size > 0 — покупка, size < 0 — продажа."""

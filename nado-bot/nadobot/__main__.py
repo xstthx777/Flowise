@@ -93,8 +93,19 @@ def main(argv: list[str]):
               f"health ratio: {float(a['health_ratio']):.2f}")
         print("Позиции:", {k: str(v) for k, v in a["positions"].items() if v != 0} or "нет")
         print("Linked signer:", ex.linked_signer(), "(бот привязан)" if ex.is_bot_linked() else "(НЕ бот)")
+        for sym, sp in ex.market_specs([m.symbol for m in cfg.markets]).items():
+            bid, ask = ex.best_bid_ask(sp.product_id)
+            try:
+                fr = f"{float(ex.funding_rate_daily(sp.product_id)) * 100:.3f}%/сутки"
+            except Exception:  # noqa: BLE001
+                fr = "?"
+            print(f"{sym}: bid {bid} / ask {ask}, мин. ордер {sp.min_size}$, фандинг {fr}")
         try:
-            print("Комиссии:", ex.fee_rates())
+            fees = ex.fee_rates()
+            print("Твои комиссии (по product_id в config): ", {
+                m: (f"maker {int(fees.maker_fee_rates_x18[sp.product_id]) / 1e14:.2f} б.п., "
+                    f"taker {int(fees.taker_fee_rates_x18[sp.product_id]) / 1e14:.2f} б.п.")
+                for m, sp in ex.market_specs([m.symbol for m in cfg.markets]).items()})
         except Exception as e:  # noqa: BLE001
             print("Комиссии: не удалось получить:", e)
     elif cmd == "run":
@@ -102,6 +113,7 @@ def main(argv: list[str]):
         Bot(cfg).run()
     elif cmd == "panic":
         from .bot import Bot
+        cfg.dry_run = True  # обходим защиту mainnet_live_confirm: panic только закрывает
         b = Bot(cfg)
         b.cfg.dry_run = False
         b.flatten("ручной panic")

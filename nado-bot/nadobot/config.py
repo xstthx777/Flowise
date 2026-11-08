@@ -25,7 +25,7 @@ def load_env(path: Path = ENV_PATH) -> None:
 @dataclass
 class MarketCfg:
     symbol: str
-    order_size_usd: float = 50
+    order_size_usd: float = 120
     offset_bps: float = 4
     max_position_usd: float = 150
     hard_position_usd: float = 300
@@ -45,6 +45,10 @@ class Config:
     vol_pause_s: float = 120
     max_daily_loss_usd: float = 20
     min_health_ratio: float = 0.5
+    funding_max_daily: float = 0.0005  # 0.05%/сутки: дороже — не набираем позицию в платящую сторону
+    fills_sync_s: float = 60
+    reject_pause_s: float = 300
+    mainnet_live_confirm: bool = False
     markets: list[MarketCfg] = field(default_factory=list)
 
     owner: str = ""  # адрес MetaMask (публичный)

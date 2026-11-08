@@ -15,8 +15,8 @@ class MarketSpec:
     symbol: str
     product_id: int
     price_increment: Decimal  # шаг цены
-    size_increment: Decimal  # шаг размера
-    min_size: Decimal  # минимальный размер ордера (в базовом активе)
+    size_increment: Decimal  # шаг размера (в базовом активе)
+    min_size: Decimal  # минимальный размер ордера в $ (notional, так у Nado)
 
 
 @dataclass
@@ -52,10 +52,14 @@ def compute_quote(
     best_ask: Decimal,
     position: Decimal,
     p: QuoteParams,
+    allow_long: bool = True,
+    allow_short: bool = True,
 ) -> Quote:
     """Считает пару post-only котировок вокруг mid со сдвигом по инвентарю.
 
     position — текущая позиция в базовом активе (+ лонг, − шорт).
+    allow_long/allow_short=False — не наращивать позицию в эту сторону
+    (например, когда эта сторона платит большой фандинг); сокращать можно всегда.
     """
     if best_bid <= 0 or best_ask <= 0 or best_ask <= best_bid:
         return Quote(None, Decimal(0), None, Decimal(0), reason="пустой/кривой стакан")
@@ -82,14 +86,33 @@ def compute_quote(
         ask_px = best_bid + spec.price_increment
 
     size = round_down(Decimal(str(p.order_size_usd)) / mid, spec.size_increment)
-    size = max(size, spec.min_size)
+    # минимум Nado задан в $: поднимаем размер, чтобы bid*size >= min_size
+    min_base = round_up(spec.min_size / bid_px, spec.size_increment) if bid_px > 0 else size
+    size = max(size, min_base)
 
     bid_size, ask_size = size, size
-    reason = "ok"
+    reasons = []
     if pos_usd >= p.max_position_usd:  # слишком длинные — только продаём
-        bid_px, bid_size, reason = None, Decimal(0), "лимит лонга: только ask"
+        bid_px, bid_size = None, Decimal(0)
+        reasons.append("лимит лонга: только ask")
     elif pos_usd <= -p.max_position_usd:
-        ask_px, ask_size, reason = None, Decimal(0), "лимит шорта: только bid"
+        ask_px, ask_size = None, Decimal(0)
+        reasons.append("лимит шорта: только bid")
+
+    # фандинг-фильтр: покупать, только чтобы закрыть шорт (и не больше него)
+    if not allow_long and bid_px is not None:
+        if position < 0:
+            bid_size = min(bid_size, round_down(-position, spec.size_increment))
+        if position >= 0 or bid_size * bid_px < spec.min_size:
+            bid_px, bid_size = None, Decimal(0)
+        reasons.append("фандинг против лонга")
+    if not allow_short and ask_px is not None:
+        if position > 0:
+            ask_size = min(ask_size, round_down(position, spec.size_increment))
+        if position <= 0 or ask_size * ask_px < spec.min_size:
+            ask_px, ask_size = None, Decimal(0)
+        reasons.append("фандинг против шорта")
+    reason = "; ".join(reasons) or "ok"
 
     return Quote(bid_px, bid_size, ask_px, ask_size, reason=reason)
 
