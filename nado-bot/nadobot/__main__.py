@@ -25,7 +25,7 @@ def _setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(ROOT / "data" / "bot.log")],
+        handlers=[logging.StreamHandler(), logging.FileHandler(ROOT / "data" / "bot.log", encoding="utf-8")],
     )
 
 
@@ -38,16 +38,27 @@ def keygen():
         print("Адрес бот-кошелька:", Account.from_key(os.environ["NADO_BOT_KEY"]).address)
         return
     acct = Account.create()
-    lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    lines = ENV_PATH.read_text(encoding="utf-8-sig").splitlines() if ENV_PATH.exists() else []
     lines = [line for line in lines if not line.startswith("NADO_BOT_KEY=")]
     lines.append(f"NADO_BOT_KEY={acct.key.hex()}")
-    ENV_PATH.write_text("\n".join(lines) + "\n")
-    os.chmod(ENV_PATH, 0o600)
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if os.name != "nt":  # на Windows chmod не ограничивает доступ — см. README
+        os.chmod(ENV_PATH, 0o600)
     print("Бот-кошелёк создан:", acct.address)
     print("Ключ записан в .env (права 600). На этот адрес деньги НЕ отправляй — он только подписывает ордера.")
 
 
+def _utf8_console():
+    """Windows-консоль по умолчанию в cp866/cp1251 и падает на «≥ → ⚠»."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main(argv: list[str]):
+    _utf8_console()
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(__doc__)
         return

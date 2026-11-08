@@ -26,23 +26,51 @@
 - Лимит Nado: не больше 50 привязок/отвязок за 7 дней. Для привязки на
   субаккаунте должно быть минимум 5 USDT0.
 
-## Установка (macOS)
+## Установка (Windows)
+
+1. Поставь **Python 3.12** (или 3.13; **3.14 не подходит**: на нём SDK Nado под Windows не ставится):
+   https://www.python.org/downloads/release/python-3128/ → «Windows installer (64-bit)».
+   При установке отметь **Add python.exe to PATH**.
+2. Скачай бота: на GitHub открой ветку `claude/tender-bell-t692ux` → **Code → Download ZIP**,
+   распакуй и перенеси папку `nado-bot` куда удобно, например в `C:\nado-bot`.
+   Путь лучше без кириллицы и пробелов.
+3. Дважды кликни **`install.bat`**. Он создаст окружение, поставит зависимости, создаст бот-кошелёк
+   и откроет `.env` в Блокноте. Впиши туда `NADO_OWNER=0x…` (адрес MetaMask) и сохрани.
+4. В папке бота кликни по адресной строке Проводника, введи `cmd` и нажми Enter. Откроется консоль, дальше:
+   ```
+   nado status
+   nado link
+   ```
+5. Запуск: двойной клик по **`run.bat`**. Остановка: **Ctrl+C** в окне. Не закрывай окно крестиком,
+   иначе ордера не снимутся (хотя через 2 минуты истекут сами).
+6. Аварийно всё закрыть: **`panic.bat`**.
+
+Все команды из таблицы ниже на Windows пишутся как `nado <команда>`, например `nado report`.
+
+**Защита `.env` на Windows.** Там лежит ключ бот-кошелька. Не храни папку в OneDrive/Dropbox
+и не давай доступ к ПК посторонним. Антивирус может ругаться на `.bat`: это нормально,
+скрипты открытые, их можно прочитать в Блокноте.
+
+**Чтобы бот не засыпал:** Параметры → Система → Питание → «Переводить в спящий режим» → *Никогда*
+(пока бот работает). Для 24/7 лучше VPS.
+
+## Установка (macOS / Linux)
 
 ```bash
 git clone -b claude/tender-bell-t692ux https://github.com/xstthx777/Flowise.git nado-src
 cp -r nado-src/nado-bot ~/nado-bot && cd ~/nado-bot
-python3 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env              # впиши NADO_OWNER = адрес MetaMask
 cp config.example.yaml config.yaml
-python -m nadobot keygen          # создаст бот-кошелёк
+python -m nadobot keygen
 ```
 
 ## Первый запуск — на testnet
 
 1. Открой testnet Nado в браузере с MetaMask, получи тестовые средства и внеси
    депозит (минимум 5 USDT0).
-2. `python -m nadobot status` проверит, что субаккаунт виден.
+2. `nado status` (macOS: `python -m nadobot status`) проверит, что субаккаунт виден.
 3. `python -m nadobot link` откроет страницу, там нажми «Подписать в MetaMask».
    В окне подписи проверь, что `signer` начинается с адреса бот-кошелька.
 4. `python -m nadobot status` должен показать: Linked signer … (бот привязан).

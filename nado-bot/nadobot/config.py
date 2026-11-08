@@ -14,7 +14,7 @@ def load_env(path: Path = ENV_PATH) -> None:
     """Мини-загрузчик .env (KEY=VALUE), чтобы не тянуть лишних зависимостей."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -55,7 +55,7 @@ class Config:
 
 def load_config(path: str | Path = ROOT / "config.yaml") -> Config:
     load_env()
-    raw = yaml.safe_load(Path(path).read_text()) or {}
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig")) or {}
     markets = [MarketCfg(**m) for m in raw.pop("markets", [])]
     cfg = Config(**raw, markets=markets)
     cfg.owner = os.environ.get("NADO_OWNER", "")
