@@ -1,0 +1,4 @@
+nado-protocol==2.0.0
+setuptools<81
+PyYAML>=6.0
+requests>=2.31
