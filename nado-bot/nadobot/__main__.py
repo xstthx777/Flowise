@@ -1,6 +1,8 @@
 """CLI: python -m nadobot <команда>
 
   keygen          создать бот-кошелёк и записать ключ в .env
+  tgsetup         подключить Telegram-бота (токен + твой чат)
+  tg              Telegram-режим: управление и подключение MetaMask из Telegram
   link            привязать бот-ключ к твоему аккаунту Nado через MetaMask
   unlink          отвязать бот-ключ (через MetaMask)
   status          equity, позиции, linked signer, комиссии
@@ -57,6 +59,51 @@ def _utf8_console():
             pass
 
 
+def tgsetup():
+    import time
+
+    import requests
+
+    from .config import set_env_value
+
+    load_env()
+    token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    if not token:
+        print("1) В Telegram открой @BotFather → /newbot → придумай имя → скопируй токен.")
+        token = input("Вставь токен бота и нажми Enter: ").strip()
+    me = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15).json()
+    if not me.get("ok"):
+        print("Токен не подошёл:", me.get("description"))
+        return
+    set_env_value("TELEGRAM_TOKEN", token)
+    name = me["result"]["username"]
+    print(f"\n2) Открой в Telegram https://t.me/{name} и отправь боту /start. Жду (до 5 минут)...")
+    api = f"https://api.telegram.org/bot{token}/getUpdates"
+    offset = 0
+    r = requests.get(api, params={"offset": -1}, timeout=15).json()
+    if r.get("result"):
+        offset = r["result"][-1]["update_id"] + 1
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        r = requests.get(api, params={"offset": offset, "timeout": 25}, timeout=35).json()
+        for upd in r.get("result", []):
+            offset = upd["update_id"] + 1
+            m = upd.get("message") or {}
+            if not (m.get("text") or "").startswith("/start"):
+                continue
+            chat, frm = m["chat"]["id"], m.get("from", {})
+            who = f"{frm.get('first_name', '')} @{frm.get('username', '-')} (id {chat})"
+            ans = input(f"Пришло /start от {who}. Это ты? [y/n]: ").strip().lower()
+            if ans in ("y", "yes", "д", "да"):
+                set_env_value("TELEGRAM_CHAT_ID", str(chat))
+                requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                              json={"chat_id": chat, "text": "✅ Готово. Теперь запусти tg.bat (или `nado tg`)."},
+                              timeout=15)
+                print("Сохранено в .env. Запускай: tg.bat (Windows) или python -m nadobot tg")
+                return
+    print("Не дождался /start. Запусти tgsetup ещё раз.")
+
+
 def main(argv: list[str]):
     _utf8_console()
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -65,6 +112,8 @@ def main(argv: list[str]):
     cmd, args = argv[0], argv[1:]
     if cmd == "keygen":
         return keygen()
+    if cmd == "tgsetup":
+        return tgsetup()
 
     _setup_logging()
     if cmd in ("points", "flow", "report"):
@@ -108,6 +157,9 @@ def main(argv: list[str]):
                 for m, sp in ex.market_specs([m.symbol for m in cfg.markets]).items()})
         except Exception as e:  # noqa: BLE001
             print("Комиссии: не удалось получить:", e)
+    elif cmd == "tg":
+        from .tgbot import TgApp
+        TgApp(cfg).run()
     elif cmd == "run":
         from .bot import Bot
         Bot(cfg).run()

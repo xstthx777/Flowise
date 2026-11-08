@@ -20,8 +20,10 @@ REJECTS_BEFORE_PAUSE = 3
 
 
 class Bot:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, tg: Notifier | None = None, telegram_control: bool = True):
+        """telegram_control=False — командами управляет внешний Telegram-сервис (nado tg)."""
         self.cfg = cfg
+        self.telegram_control = telegram_control
         if cfg.mode == "mainnet" and not cfg.dry_run and not cfg.mainnet_live_confirm:
             raise SystemExit(
                 "mainnet + dry_run: false требует mainnet_live_confirm: true в config.yaml.\n"
@@ -29,7 +31,7 @@ class Bot:
             )
         self.ex = Exchange(cfg.mode, cfg.bot_key, cfg.owner, cfg.subaccount_name)
         self.ledger = Ledger()
-        self.tg = Notifier(cfg.tg_token, cfg.tg_chat)
+        self.tg = tg or Notifier(cfg.tg_token, cfg.tg_chat)
         self.specs = self.ex.market_specs([m.symbol for m in cfg.markets])
         self.params = {
             m.symbol: QuoteParams(m.order_size_usd, m.offset_bps, m.max_position_usd,
@@ -86,15 +88,20 @@ class Bot:
         mode = "DRY-RUN (ордера не отправляются)" if self.cfg.dry_run else "LIVE"
         self.tg.send(f"Старт {self.cfg.mode} {mode}. Equity {acct['equity']:.2f}$. "
                      f"Рынки: {', '.join(self.specs)}")
-        self._setup_telegram()
+        if self.telegram_control:
+            self._setup_telegram()
+
+    def status_text(self) -> str:
+        eq = self._last_equity
+        pos = {s: str(self._positions.get(sp.product_id, 0)) for s, sp in self.specs.items()}
+        st = "ПАУЗА" if self.user_paused else ("остановлен" if self.stopped else "работает")
+        fr = {s: f"{float(v) * 100:.3f}%/сут" for s, v in self.funding.items()}
+        if eq is None:
+            return st
+        return f"{st}. Equity {eq:.2f}$\nПозиции: {pos}\nФандинг: {fr}"
 
     def _setup_telegram(self):
-        def status():
-            eq = self._last_equity
-            pos = {s: str(self._positions.get(sp.product_id, 0)) for s, sp in self.specs.items()}
-            st = "ПАУЗА" if self.user_paused else ("остановлен" if self.stopped else "работает")
-            fr = {s: f"{float(v) * 100:.3f}%/сут" for s, v in self.funding.items()}
-            return f"{st}. Equity {eq:.2f}$\nПозиции: {pos}\nФандинг: {fr}" if eq is not None else st
+        status = self.status_text
 
         def pause():
             with self._lock:

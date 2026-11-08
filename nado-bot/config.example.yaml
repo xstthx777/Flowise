@@ -38,3 +38,7 @@ markets:
 #    max_position_usd: 250
 #    hard_position_usd: 500
 #    skew_bps: 3
+
+# Страница подписи для подключения MetaMask из Telegram (web/sign.html из этого репозитория).
+# По умолчанию — githack с привязкой к коммиту. Можно включить GitHub Pages и указать свой адрес.
+# sign_page_url: https://<твой-логин>.github.io/Flowise/nado-bot/web/sign.html

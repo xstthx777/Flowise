@@ -74,7 +74,30 @@ def _jsonable(o):
     return o
 
 
-def run_link_server(ex: Exchange, unlink: bool = False, port: int = 8765) -> bool:
+def link_url_params(ex: Exchange, unlink: bool = False) -> dict:
+    """Короткие параметры для публичной страницы web/sign.html."""
+    typed = _jsonable(ex.link_signer_typed_data(unlink=unlink))
+    chain_id = int(typed["domain"]["chainId"])
+    net = {57073: "mainnet", 763373: "testnet"}.get(chain_id)
+    if net is None:
+        raise ValueError(f"неизвестная сеть chainId={chain_id}")
+    m = typed["message"]
+    return {"net": net, "s": m["sender"], "g": m["signer"], "n": str(m["nonce"]),
+            "v": typed["domain"]["verifyingContract"], "o": ex.owner}
+
+
+def submit_signature(ex: Exchange, params: dict, signature: str):
+    """Отправить в Nado подпись, полученную вручную (вставленную в Telegram)."""
+    return ex.submit_link_signer({"sender": params["s"], "signer": params["g"], "nonce": params["n"]}, signature)
+
+
+def is_link_done(ex: Exchange, unlink: bool) -> bool:
+    linked = ex.linked_signer().lower()
+    return linked.startswith("0x" + "0" * 40) if unlink else ex.is_bot_linked()
+
+
+def start_link_server(ex: Exchange, unlink: bool = False, port: int = 8765, on_done=None):
+    """Поднимает страницу на 127.0.0.1 (неблокирующе). Возвращает (server, url)."""
     typed = _jsonable(ex.link_signer_typed_data(unlink=unlink))
     chain_id = int(typed["domain"]["chainId"])
     chain_params = CHAINS.get(chain_id, {"chainId": hex(chain_id)})
@@ -84,8 +107,6 @@ def run_link_server(ex: Exchange, unlink: bool = False, port: int = 8765) -> boo
             .replace("__OWNER__", ex.owner)
             .replace("__BOT__", ex.bot.address)
             .replace("__TITLE__", title))
-    result = {"ok": False}
-    done = threading.Event()
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -109,22 +130,34 @@ def run_link_server(ex: Exchange, unlink: bool = False, port: int = 8765) -> boo
             if self.path != "/signature":
                 return self._send(404, "{}")
             n = int(self.headers.get("Content-Length", 0))
+            ok = False
             try:
                 sig = json.loads(self.rfile.read(n))["signature"]
                 ex.submit_link_signer(typed["message"], sig)
-                linked = ex.linked_signer()
-                ok = (linked.lower().startswith("0x" + "0" * 40)) if unlink else ex.is_bot_linked()
-                msg = (f"Готово. Linked signer сейчас: {linked}. Окно можно закрыть." if ok
-                       else f"Nado принял запрос, но linked signer = {linked}. Проверь вручную.")
-                result["ok"] = ok
+                ok = is_link_done(ex, unlink)
+                msg = (f"Готово. Linked signer сейчас: {ex.linked_signer()}. Окно можно закрыть." if ok
+                       else f"Nado принял запрос, но linked signer = {ex.linked_signer()}. Проверь вручную.")
             except Exception as e:  # noqa: BLE001
                 msg = f"Nado отклонил подпись: {e}"
-            self._send(200, json.dumps({"ok": result["ok"], "message": msg}))
-            done.set()
+            self._send(200, json.dumps({"ok": ok, "message": msg}))
+            if on_done:
+                on_done(ok, msg)
 
     srv = HTTPServer(("127.0.0.1", port), H)  # только localhost
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    url = f"http://127.0.0.1:{port}/"
+    return srv, f"http://127.0.0.1:{port}/"
+
+
+def run_link_server(ex: Exchange, unlink: bool = False, port: int = 8765) -> bool:
+    """CLI-режим: открыть страницу и ждать результата."""
+    result = {"ok": False}
+    done = threading.Event()
+
+    def finish(ok, _msg):
+        result["ok"] = ok
+        done.set()
+
+    srv, url = start_link_server(ex, unlink, port, on_done=finish)
     print(f"Открой в браузере с MetaMask: {url}")
     try:
         webbrowser.open(url)

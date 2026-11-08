@@ -8,6 +8,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
+CONFIG_PATH = ROOT / "config.yaml"
+# Публичная страница подписи (web/sign.html), закреплённая на коммите — её нельзя подменить незаметно
+DEFAULT_SIGN_PAGE = "https://raw.githack.com/xstthx777/Flowise/claude/tender-bell-t692ux/nado-bot/web/sign.html"
 
 
 def load_env(path: Path = ENV_PATH) -> None:
@@ -49,6 +52,7 @@ class Config:
     fills_sync_s: float = 60
     reject_pause_s: float = 300
     mainnet_live_confirm: bool = False
+    sign_page_url: str = DEFAULT_SIGN_PAGE
     markets: list[MarketCfg] = field(default_factory=list)
 
     owner: str = ""  # адрес MetaMask (публичный)
@@ -57,7 +61,25 @@ class Config:
     tg_chat: str = ""
 
 
-def load_config(path: str | Path = ROOT / "config.yaml") -> Config:
+def set_env_value(key: str, value: str, path: Path = ENV_PATH) -> None:
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
+    lines = [line for line in lines if not line.strip().startswith(key + "=")]
+    lines.append(f"{key}={value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[key] = value
+
+
+def set_config_value(key: str, value: str, path: Path = CONFIG_PATH) -> None:
+    """Меняет «key: value» верхнего уровня в config.yaml, сохраняя комментарии."""
+    import re
+
+    text = path.read_text(encoding="utf-8-sig")
+    pat = re.compile(rf"^{re.escape(key)}:[^\n#]*", re.M)
+    text = pat.sub(f"{key}: {value}", text, count=1) if pat.search(text) else text + f"\n{key}: {value}\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def load_config(path: str | Path = CONFIG_PATH) -> Config:
     load_env()
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig")) or {}
     markets = [MarketCfg(**m) for m in raw.pop("markets", [])]

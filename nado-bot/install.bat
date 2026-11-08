@@ -29,8 +29,13 @@ if not exist "config.yaml" copy "config.example.yaml" "config.yaml" >nul
 ".venv\Scripts\python.exe" -m nadobot keygen
 
 echo.
-echo === Готово ===
-echo 1. Открой .env в Блокноте и впиши NADO_OWNER = адрес своего MetaMask.
-echo 2. Дальше в этой папке:  nado status   затем   nado link   затем   run.bat
+echo === Почти готово ===
+echo Сейчас откроется .env в Блокноте: впиши NADO_OWNER = адрес своего MetaMask, сохрани и закрой Блокнот.
 notepad .env
+echo.
+echo Подключаем Telegram-бота...
+".venv\Scripts\python.exe" -m nadobot tgsetup
+echo.
+echo === Готово ===
+echo Запускай tg.bat — дальше всё управление и подключение MetaMask в Telegram.
 pause
