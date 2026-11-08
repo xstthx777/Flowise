@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
 CONFIG_PATH = ROOT / "config.yaml"
 # Публичная страница подписи (web/sign.html), закреплённая на коммите — её нельзя подменить незаметно
-DEFAULT_SIGN_PAGE = "https://raw.githack.com/xstthx777/Flowise/claude/tender-bell-t692ux/nado-bot/web/sign.html"
+DEFAULT_SIGN_PAGE = "https://rawcdn.githack.com/xstthx777/Flowise/d496dcccd3dd07d811a3e9113081f0daeb519966/nado-bot/web/sign.html"
 
 
 def load_env(path: Path = ENV_PATH) -> None:
