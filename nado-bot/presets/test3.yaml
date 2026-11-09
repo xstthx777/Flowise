@@ -1,0 +1,51 @@
+# Готовый пресет: ТЕСТ без кошелька на 3 рынках (по итогам скана 9.11.2026).
+# Запуск: test3.bat (Windows) или NADO_CONFIG=presets/test3.yaml python -m nadobot paper
+paper: true
+paper_balance: 300          # виртуальный баланс на все 3 рынка
+mode: mainnet               # живые цены настоящего рынка
+dry_run: true
+subaccount_name: default
+
+loop_interval_s: 1
+requote_bps: 1
+order_ttl_s: 120
+
+vol_window_s: 60
+vol_max_move_bps: 40
+vol_pause_s: 120
+
+max_daily_loss_usd: 15      # стоп на сутки по всем рынкам вместе
+max_total_position_usd: 450 # общий лимит позиций: дальше бот только сокращает
+min_health_ratio: 0.5
+funding_max_daily: 0.0005
+fills_sync_s: 60
+reject_pause_s: 300
+
+flow_filter: true           # по скану: −30% просадки
+flow_window_s: 15
+flow_imbalance: 0.6
+flow_min_notional_usd: 2000
+momentum_window_s: 10
+momentum_bps: 3
+
+mainnet_live_confirm: false
+
+markets:
+  - symbol: SNDK-PERP       # лучший в скане (широкий спред); акция — вне часов США может стоять
+    order_size_usd: 110
+    offset_bps: 5
+    max_position_usd: 200
+    hard_position_usd: 350
+    skew_bps: 3
+  - symbol: ETH-PERP        # самый большой объём при умеренных затратах
+    order_size_usd: 110
+    offset_bps: 2
+    max_position_usd: 200
+    hard_position_usd: 350
+    skew_bps: 2
+  - symbol: BNB-PERP        # третий по цене $/1k с фильтром
+    order_size_usd: 110
+    offset_bps: 2
+    max_position_usd: 200
+    hard_position_usd: 350
+    skew_bps: 2

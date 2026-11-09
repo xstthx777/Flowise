@@ -47,6 +47,7 @@ class Config:
     vol_max_move_bps: float = 40
     vol_pause_s: float = 120
     max_daily_loss_usd: float = 20
+    max_total_position_usd: float = 0  # общий лимит позиций по всем рынкам, 0 = выкл
     min_health_ratio: float = 0.5
     funding_max_daily: float = 0.0005  # 0.05%/сутки: дороже — не набираем позицию в платящую сторону
     fills_sync_s: float = 60
@@ -105,7 +106,11 @@ def set_first_market(symbol: str, offset_bps: float, path: Path = CONFIG_PATH) -
     path.write_text(text[:start] + block + text[block_end:], encoding="utf-8")
 
 
-def load_config(path: str | Path = CONFIG_PATH) -> Config:
+def load_config(path: str | Path | None = None) -> Config:
+    # NADO_CONFIG позволяет запускать с другим файлом (пресеты)
+    path = path or os.environ.get("NADO_CONFIG") or CONFIG_PATH
+    if not Path(path).is_absolute():
+        path = ROOT / path
     load_env()
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8-sig")) or {}
     markets = [MarketCfg(**m) for m in raw.pop("markets", [])]

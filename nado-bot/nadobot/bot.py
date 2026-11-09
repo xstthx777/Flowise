@@ -269,6 +269,17 @@ class Bot:
         thr = Decimal(str(self.cfg.funding_max_daily))
         allow_long, allow_short = fr <= thr, fr >= -thr
 
+        # общий лимит риска на все рынки: дальше только сокращаем позиции
+        if self.cfg.max_total_position_usd > 0:
+            total = 0.0
+            for s2, sp2 in self.specs.items():
+                amt = self._positions.get(sp2.product_id, Decimal(0))
+                if amt:
+                    b2, a2 = self.ex.best_bid_ask(sp2.product_id) if s2 != sym else (bid, ask)
+                    total += abs(float(amt * (b2 + a2) / 2))
+            if total >= self.cfg.max_total_position_usd:
+                allow_long = allow_short = False
+
         pos = self._positions.get(spec.product_id, Decimal(0))
         q = compute_quote(spec, bid, ask, pos, p, allow_long, allow_short)
 
