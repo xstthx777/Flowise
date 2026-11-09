@@ -17,11 +17,24 @@ if not defined PY (
 )
 echo Использую: %PY%
 
+rem Если .venv создан другой версией Python (например 3.14) — пересоздаём
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" -c "import sys; sys.exit(0 if sys.version_info[:2] in ((3,12),(3,13)) else 1)" >nul 2>&1 || (
+    echo Старое окружение .venv создано не той версией Python — удаляю и создаю заново.
+    rmdir /s /q .venv
+  )
+)
 if not exist ".venv\Scripts\python.exe" (
   %PY% -m venv .venv || (echo [!] Не удалось создать venv & pause & exit /b 1)
 )
+".venv\Scripts\python.exe" --version
 ".venv\Scripts\python.exe" -m pip install --upgrade pip -q
-".venv\Scripts\python.exe" -m pip install -r requirements.txt || (echo [!] Ошибка установки зависимостей & pause & exit /b 1)
+rem Только готовые пакеты: компилятор C++ не нужен
+".venv\Scripts\python.exe" -m pip install --only-binary=:all: -r requirements.txt || (
+  echo [!] Ошибка установки зависимостей. Пришли скрин этого окна.
+  pause
+  exit /b 1
+)
 
 if not exist ".env" copy ".env.example" ".env" >nul
 if not exist "config.yaml" copy "config.example.yaml" "config.yaml" >nul
