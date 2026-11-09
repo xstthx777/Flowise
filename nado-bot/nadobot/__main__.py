@@ -6,6 +6,7 @@
   link            привязать бот-ключ к твоему аккаунту Nado через MetaMask
   unlink          отвязать бот-ключ (через MetaMask)
   status          equity, позиции, linked signer, комиссии
+  paper [reset]   ТЕСТ без кошелька: живые цены Nado, виртуальные деньги
   run             запустить бота
   panic           снять все ордера и закрыть позиции
   report          затраты и цена поинта
@@ -157,6 +158,21 @@ def main(argv: list[str]):
                 for m, sp in ex.market_specs([m.symbol for m in cfg.markets]).items()})
         except Exception as e:  # noqa: BLE001
             print("Комиссии: не удалось получить:", e)
+    elif cmd == "paper":
+        from .bot import Bot
+        from .paper import make_paper
+        ex, led = make_paper(cfg, reset=bool(args[:1] == ["reset"]))
+        print(f"ТЕСТ без кошелька: сеть {cfg.mode}, старт {ex.start_balance}$, сейчас {ex.account()['equity']:.2f}$. "
+              f"Ctrl+C — стоп, отчёт: nado paperreport")
+        Bot(cfg, ex=ex, ledger=led).run()
+    elif cmd == "paperreport":
+        from .paper import make_paper
+        ex, led = make_paper(cfg)
+        try:
+            vol = ex.protocol_volume_24h()
+        except Exception:  # noqa: BLE001
+            vol = None
+        print(led.report(protocol_volume_24h=vol)["text"])
     elif cmd == "tg":
         from .tgbot import TgApp
         TgApp(cfg).run()

@@ -40,6 +40,7 @@ HELP = """Команды:
 /link — подключить MetaMask, /unlink — отключить
 /points 12345 — записать текущее число поинтов (из app.nado.xyz)
 /flow 100 или /flow -50 — записать депозит/вывод
+/paper — тест без кошелька (живые цены, виртуальные деньги), /paper reset — сбросить, /paper off — реальный режим
 /dryrun on|off — режим «только считать» / реальные ордера
 /panic — снять ордера и закрыть позиции (с подтверждением)"""
 
@@ -62,13 +63,53 @@ class TgApp:
             raise SystemExit("Нужны TELEGRAM_TOKEN и TELEGRAM_CHAT_ID в .env. Запусти: nado tgsetup")
         self.cfg = cfg
         self.tg = Notifier(cfg.tg_token, cfg.tg_chat)
-        self.ex = Exchange(cfg.mode, cfg.bot_key, cfg.owner, cfg.subaccount_name)
-        self.ledger = Ledger()
+        self._init_exchange()
         self.bot = None  # nadobot.bot.Bot, пока торговля включена
         self.inbox: "queue.Queue[dict]" = queue.Queue()
         self.link_job: dict | None = None  # {"unlink", "params", "until", "srv"}
         self.panic_armed_until = 0.0
         self.last_tick = 0.0
+
+    def _init_exchange(self, reset_paper: bool = False):
+        self.paper = self.cfg.paper
+        if self.paper:
+            from .paper import make_paper
+            self.ex, self.ledger = make_paper(self.cfg, reset=reset_paper)
+        else:
+            self.ex = Exchange(self.cfg.mode, self.cfg.bot_key, self.cfg.owner, self.cfg.subaccount_name)
+            self.ledger = Ledger()
+        if hasattr(self, "_specs_cache"):
+            del self._specs_cache
+
+    def report(self) -> str:
+        if self.bot is not None:
+            return self.bot.report_text()
+        vol = None
+        if hasattr(self.ex, "protocol_volume_24h"):
+            try:
+                vol = self.ex.protocol_volume_24h()
+            except Exception:  # noqa: BLE001
+                pass
+        return self.ledger.report(protocol_volume_24h=vol)["text"]
+
+    def set_paper(self, on: bool, reset: bool = False):
+        if self.bot is not None:
+            self.stop_trading("смена режима", save=False)
+        set_config_value("paper", "true" if on else "false")
+        self.cfg = load_config()
+        try:
+            self._init_exchange(reset_paper=reset)
+        except Exception as e:  # noqa: BLE001
+            set_config_value("paper", "true")
+            self.cfg = load_config()
+            self._init_exchange()
+            return self.say(f"Не получилось включить реальный режим: {e}\n"
+                            "Проверь NADO_OWNER и NADO_BOT_KEY в .env. Остаюсь в тесте.")
+        if on:
+            self.menu(f"🧪 Тестовый режим{' (сброшен)' if reset else ''}: живые цены Nado, виртуальный баланс "
+                      f"{self.cfg.paper_balance}$, кошелёк не нужен. Жми ▶️ Запустить.")
+        else:
+            self.menu("💼 Реальный режим. Подключи MetaMask (🦊) и начни с DRY-RUN.")
 
     # ---------- ответы ----------
     def say(self, text: str, buttons=None):
@@ -85,7 +126,8 @@ class TgApp:
 
         self.cfg = load_config()  # подхватить правки config.yaml
         try:
-            bot = Bot(self.cfg, tg=self.tg, telegram_control=False)
+            bot = Bot(self.cfg, tg=self.tg, telegram_control=False,
+                  ex=self.ex if self.paper else None, ledger=self.ledger)
             bot.preflight()
         except SystemExit as e:
             return self.say(f"Не запустил:\n{e}")
@@ -94,7 +136,8 @@ class TgApp:
         self.bot = bot
         _save_state({"trading": True})
         if not quiet:
-            self.say("▶️ Торговля запущена." + (" Режим DRY-RUN: ордера не отправляются." if self.cfg.dry_run else ""))
+            self.say("▶️ Торговля запущена." + (" 🧪 ТЕСТ: виртуальные деньги, живые цены." if self.paper else
+                                          " Режим DRY-RUN: ордера не отправляются." if self.cfg.dry_run else ""))
 
     def stop_trading(self, reason: str = "по команде", save: bool = True):
         if self.bot is None:
@@ -102,7 +145,9 @@ class TgApp:
                 _save_state({"trading": False})
             return self.say("Торговля и так остановлена.")
         self.bot.cancel_only()
+        self.bot.fills_ts = 0
         self.bot.sync_fills()
+        self.bot.snapshot_now()
         self.bot = None
         if save:
             _save_state({"trading": False})
@@ -130,6 +175,9 @@ class TgApp:
 
     # ---------- MetaMask ----------
     def start_link(self, unlink: bool = False):
+        if self.paper:
+            return self.say("Сейчас тестовый режим — кошелёк не нужен. Чтобы подключить MetaMask, "
+                            "переключись: ⚙️ Режим → 💼 Реальный.", MENU)
         if self.bot is not None and unlink:
             self.stop_trading("перед отвязкой")
         try:
@@ -212,13 +260,19 @@ class TgApp:
         try:
             a = self.ex.account()
             pos = {s: str(a["positions"].get(sp.product_id, 0)) for s, sp in self._specs().items()}
+            regime = "🧪 ТЕСТ (виртуальные деньги)" if self.paper else ("DRY-RUN" if self.cfg.dry_run else "LIVE")
             lines += [
-                f"Сеть: {self.cfg.mode} | {'DRY-RUN' if self.cfg.dry_run else 'LIVE'}",
+                f"Сеть: {self.cfg.mode} | {regime}",
                 f"Торговля: {'▶️ включена' if self.bot else '⏹ выключена'}",
                 f"Equity: {a['equity']:.2f}$ | health ratio {float(a['health_ratio']):.2f}",
                 f"Позиции: {pos}",
-                f"MetaMask: {'✅ подключён' if self.ex.is_bot_linked() else '❌ не подключён (/link)'}",
             ]
+            if self.paper:
+                pnl = a["equity"] - self.ex.start_balance
+                lines.append(f"Старт теста: {self.ex.start_balance:.2f}$ → сейчас {a['equity']:.2f}$ ({pnl:+.2f}$)")
+                lines.append(f"Ордеров в симуляторе: {len(self.ex.orders)}, исполнений: {len(self.ex.fills)}")
+            else:
+                lines.append(f"MetaMask: {'✅ подключён' if self.ex.is_bot_linked() else '❌ не подключён (/link)'}")
         except Exception as e:  # noqa: BLE001
             lines.append(f"Nado недоступен: {e}")
         if self.bot:
@@ -234,12 +288,17 @@ class TgApp:
         c = self.cfg
         mk = "\n".join(f"• {m.symbol}: ордер {m.order_size_usd}$, отступ {m.offset_bps} б.п., "
                        f"лимит {m.max_position_usd}/{m.hard_position_usd}$" for m in c.markets)
+        regime = ("🧪 ТЕСТ без кошелька (виртуальные деньги)" if self.paper
+                  else "DRY-RUN (только расчёт)" if c.dry_run else "LIVE (реальные ордера)")
         self.say(
-            f"Сеть: {c.mode}\nРежим: {'DRY-RUN (только расчёт)' if c.dry_run else 'LIVE (реальные ордера)'}\n"
+            f"Сеть: {c.mode}\nРежим: {regime}\n"
             f"Kill-switch: −{c.max_daily_loss_usd}$/сутки\nРынки:\n{mk}\n\n"
             "Сеть и рынки меняются в config.yaml. Здесь можно переключить режим:",
-            [[{"text": "🧪 DRY-RUN", "callback_data": "dryrun_on"},
-              {"text": "💸 LIVE", "callback_data": "dryrun_off"}]])
+            [[{"text": "🧪 Тест без кошелька", "callback_data": "paper_on"},
+              {"text": "💼 Реальный", "callback_data": "paper_off"}],
+             [{"text": "🔄 Сбросить тест", "callback_data": "paper_reset"}],
+             [{"text": "DRY-RUN (реальный)", "callback_data": "dryrun_on"},
+              {"text": "💸 LIVE (реальный)", "callback_data": "dryrun_off"}]])
 
     def set_dryrun(self, on: bool):
         was_running = self.bot is not None
@@ -270,7 +329,7 @@ class TgApp:
         _save_state({"trading": False})
         cfg = load_config()
         cfg.dry_run = True  # чтобы конструктор не упёрся в mainnet_live_confirm
-        b = Bot(cfg, tg=self.tg, telegram_control=False)
+        b = Bot(cfg, tg=self.tg, telegram_control=False, ex=self.ex if self.paper else None, ledger=self.ledger)
         b.cfg.dry_run = False
         b.flatten("ручной panic из Telegram")
         self.say("Готово: ордера сняты, позиции закрыты (если были). Торговля выключена.", MENU)
@@ -297,9 +356,15 @@ class TgApp:
             elif cmd == "status":
                 self.status()
             elif cmd == "report":
-                self.say(self.ledger.report()["text"])
+                self.say(self.report())
+            elif cmd == "paper_on" or (cmd == "paper" and args[:1] in ([], ["on"])):
+                self.set_paper(True)
+            elif cmd == "paper_off" or (cmd == "paper" and args[:1] == ["off"]):
+                self.set_paper(False)
+            elif cmd == "paper_reset" or (cmd == "paper" and args[:1] == ["reset"]):
+                self.set_paper(True, reset=True)
             elif cmd == "run":
-                if not self.cfg.dry_run and not self.ex.is_bot_linked():
+                if not self.paper and not self.cfg.dry_run and not self.ex.is_bot_linked():
                     return self.say("MetaMask не подключён. Сначала 🦊 /link", MENU)
                 self.start_trading()
             elif cmd == "stop":
@@ -339,7 +404,8 @@ class TgApp:
 
         self.tg.start_inbox(self.inbox, on_foreign=foreign)
         resume = _load_state().get("trading")
-        self.menu(f"🟢 Nado Bot запущен ({self.cfg.mode}, {'DRY-RUN' if self.cfg.dry_run else 'LIVE'})."
+        regime = "🧪 ТЕСТ без кошелька" if self.paper else ("DRY-RUN" if self.cfg.dry_run else "LIVE")
+        self.menu(f"🟢 Nado Bot запущен ({self.cfg.mode}, {regime})."
                   + (" Возобновляю торговлю после перезапуска…" if resume else ""))
         if resume:
             self.start_trading(quiet=False)

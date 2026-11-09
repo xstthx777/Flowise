@@ -62,7 +62,7 @@ class Ledger:
         ).fetchone()
         return {"fills": r[0], "volume": r[1], "fees": r[2]}
 
-    def report(self) -> dict:
+    def report(self, protocol_volume_24h: float | None = None) -> dict:
         first = self.db.execute("SELECT ts, equity FROM equity ORDER BY ts LIMIT 1").fetchone()
         last = self.db.execute("SELECT ts, equity FROM equity ORDER BY ts DESC LIMIT 1").fetchone()
         if not first:
@@ -95,6 +95,23 @@ class Ledger:
             cpp = "— введи текущие поинты: points <число> (сейчас и после каждого начисления)"
         per_day = f"{cost / days:.2f}$/день" if days >= 1 else "<1 дня данных"
         c1k = f"{out['cost_per_1k_volume']:.3f}$" if all_t["volume"] else "—"
+        est = ""
+        # объём и затраты в сутки: за последние 24ч, а если данных меньше суток — пересчёт темпа на сутки
+        span_days = max((last[0] - first[0]) / 86400, 1 / 1440)
+        extrap = span_days < 1
+        vol_day = all_t["volume"] / span_days if extrap else day["volume"]
+        cost_day = cost / span_days if extrap else cost / days
+        if extrap and all_t["volume"]:
+            est += (f"\nТемп на сутки (экстраполяция {span_days * 1440:.0f} мин данных): "
+                    f"объём ≈{vol_day:,.0f}$, итог ≈{-cost_day:+,.2f}$/сутки")
+        if protocol_volume_24h and vol_day:
+            share = vol_day / protocol_volume_24h
+            lo, hi = 300_000 / 7 * share, 950_000 / 7 * share
+            est += (f"\nГрубая оценка поинтов: {lo:,.0f}–{hi:,.0f} в день "
+                    f"(доля {share * 100:.3f}% от {protocol_volume_24h / 1e6:,.0f}M$ объёма Nado за 24ч; "
+                    f"без учёта fee tier, токсичности и рефералок — реальное число может сильно отличаться)")
+            if lo > 0 and cost_day > 0:
+                est += f"\nОценка цены поинта: {cost_day / hi:.4f}–{cost_day / lo:.4f}$"
         out["text"] = (
             f"Период: {days:.1f} дн.\n"
             f"Equity: {first[1]:.2f}$ → {last[1]:.2f}$ (депозиты/выводы {flows:+.2f}$)\n"
@@ -102,5 +119,5 @@ class Ledger:
             f"Комиссии: {all_t['fees']:+.2f}$ (минус = ребейт), за 24ч {day['fees']:+.2f}$\n"
             f"Затраты на фарм: {cost:.2f}$ ({per_day}, {c1k} на 1000$ объёма)\n"
             f"Поинты за период: {points:g}\nЦена поинта: {cpp}"
-        )
+        ) + est
         return out

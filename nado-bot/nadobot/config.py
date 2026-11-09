@@ -53,6 +53,8 @@ class Config:
     reject_pause_s: float = 300
     mainnet_live_confirm: bool = False
     sign_page_url: str = DEFAULT_SIGN_PAGE
+    paper: bool = False  # тестовый режим без кошелька
+    paper_balance: float = 200
     markets: list[MarketCfg] = field(default_factory=list)
 
     owner: str = ""  # адрес MetaMask (публичный)

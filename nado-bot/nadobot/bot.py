@@ -20,17 +20,21 @@ REJECTS_BEFORE_PAUSE = 3
 
 
 class Bot:
-    def __init__(self, cfg: Config, tg: Notifier | None = None, telegram_control: bool = True):
+    def __init__(self, cfg: Config, tg: Notifier | None = None, telegram_control: bool = True,
+                 ex=None, ledger: Ledger | None = None):
         """telegram_control=False — командами управляет внешний Telegram-сервис (nado tg)."""
         self.cfg = cfg
         self.telegram_control = telegram_control
-        if cfg.mode == "mainnet" and not cfg.dry_run and not cfg.mainnet_live_confirm:
+        self.paper = bool(getattr(ex, "is_paper", False))
+        if self.paper:
+            cfg.dry_run = False  # в тесте «ордера» идут в симулятор, а не на биржу
+        if not self.paper and cfg.mode == "mainnet" and not cfg.dry_run and not cfg.mainnet_live_confirm:
             raise SystemExit(
                 "mainnet + dry_run: false требует mainnet_live_confirm: true в config.yaml.\n"
                 "Сначала прогоняй бота на testnet и в dry_run."
             )
-        self.ex = Exchange(cfg.mode, cfg.bot_key, cfg.owner, cfg.subaccount_name)
-        self.ledger = Ledger()
+        self.ex = ex or Exchange(cfg.mode, cfg.bot_key, cfg.owner, cfg.subaccount_name)
+        self.ledger = ledger or Ledger()
         self.tg = tg or Notifier(cfg.tg_token, cfg.tg_chat)
         self.specs = self.ex.market_specs([m.symbol for m in cfg.markets])
         self.params = {
@@ -85,11 +89,29 @@ class Bot:
                 )
             log.warning("%s: уже есть позиция %.0f$ — бот будет считать её своей и сокращать", sym, usd)
         log.info("Equity %.2f$, позиции %s", acct["equity"], pos or "нет")
-        mode = "DRY-RUN (ордера не отправляются)" if self.cfg.dry_run else "LIVE"
+        mode = ("🧪 ТЕСТ без кошелька (виртуальные деньги, живые цены)" if self.paper
+                else "DRY-RUN (ордера не отправляются)" if self.cfg.dry_run else "LIVE")
         self.tg.send(f"Старт {self.cfg.mode} {mode}. Equity {acct['equity']:.2f}$. "
                      f"Рынки: {', '.join(self.specs)}")
         if self.telegram_control:
             self._setup_telegram()
+
+    def snapshot_now(self):
+        try:
+            self.ledger.snapshot(float(self.ex.account()["equity"]))
+            self.last_snapshot = time.time()
+        except Exception as e:  # noqa: BLE001
+            log.debug("snapshot: %s", e)
+
+    def report_text(self) -> str:
+        self.snapshot_now()
+        vol = None
+        if hasattr(self.ex, "protocol_volume_24h"):
+            try:
+                vol = self.ex.protocol_volume_24h()
+            except Exception:  # noqa: BLE001
+                vol = None
+        return self.ledger.report(protocol_volume_24h=vol)["text"]
 
     def status_text(self) -> str:
         eq = self._last_equity
@@ -120,7 +142,7 @@ class Bot:
             return "Останавливаюсь: сниму ордера и выйду."
 
         self.tg.on("/status", status)
-        self.tg.on("/report", lambda: self.ledger.report()["text"])
+        self.tg.on("/report", self.report_text)
         self.tg.on("/pause", pause)
         self.tg.on("/resume", resume)
         self.tg.on("/stop", stop)
@@ -185,7 +207,7 @@ class Bot:
         today = datetime.now(timezone.utc).date()
         if self.day != today:
             if self.day is not None:  # сутки прошли — отчёт
-                self.tg.send("Суточный отчёт:\n" + self.ledger.report()["text"])
+                self.tg.send("Суточный отчёт:\n" + self.report_text())
             self.day, self.day_start_equity = today, eq
             self.ledger.event("day", f"start equity {eq:.2f}")
         if now - self.last_snapshot > SNAPSHOT_EVERY_S:
@@ -308,5 +330,7 @@ class Bot:
             log.info("Остановка по Ctrl+C")
         finally:
             self.cancel_only()
+            self.fills_ts = 0
             self.sync_fills()
+            self.snapshot_now()
             self.tg.send("Бот остановлен, ордера сняты (позиции не трогал).")
