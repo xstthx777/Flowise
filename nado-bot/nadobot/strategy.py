@@ -142,3 +142,63 @@ def needs_requote(last_mid: Optional[float], mid: float, requote_bps: float) -> 
     if last_mid is None:
         return True
     return abs(mid - last_mid) / last_mid * 1e4 >= requote_bps
+
+
+@dataclass
+class FlowParams:
+    window_s: float = 15  # окно для дисбаланса сделок
+    imbalance: float = 0.6  # |купли−продажи|/всего ≥ этого — односторонний поток
+    min_notional_usd: float = 2000  # меньше этого объёма в окне — шум, не реагируем
+    momentum_window_s: float = 10  # окно для импульса цены
+    momentum_bps: float = 3  # цена сходила больше чем на столько — не стоим у неё на пути
+
+
+class FlowFilter:
+    """Снимает сторону котировок, по которой нас вот-вот «съедят».
+
+    - Дисбаланс: если в последних сделках доминируют продажи тейкеров — не покупаем (bid снят),
+      доминируют покупки — не продаём (ask снят).
+    - Импульс: если mid за momentum_window_s упал на ≥ momentum_bps — снимаем bid, вырос — ask.
+    Сторону, которая сокращает позицию, тоже снимаем: закрыть позицию выгоднее после движения.
+    """
+
+    def __init__(self, p: FlowParams):
+        self.p = p
+        self._mids: list[tuple[float, float]] = []
+
+    def signal(self, now: float, mid: float, trades) -> tuple[bool, bool, str]:
+        """trades: итерируемое (idx, ts, price, side, notional). Возвращает (block_bid, block_ask, причина)."""
+        p = self.p
+        self._mids.append((now, mid))
+        self._mids = [(t, m) for t, m in self._mids if now - t <= max(p.momentum_window_s, 1) + 1]
+        block_bid = block_ask = False
+        why = []
+
+        buy = sell = 0.0
+        for t in trades:
+            if now - t[1] <= p.window_s:
+                if t[3] > 0:
+                    buy += float(t[4])
+                else:
+                    sell += float(t[4])
+        tot = buy + sell
+        if tot >= p.min_notional_usd:
+            imb = (buy - sell) / tot
+            if imb <= -p.imbalance:
+                block_bid = True
+                why.append(f"продажи {-imb:.0%}")
+            elif imb >= p.imbalance:
+                block_ask = True
+                why.append(f"покупки {imb:.0%}")
+
+        old = [m for t, m in self._mids if now - t >= p.momentum_window_s - 0.5]
+        ref = old[-1] if old else self._mids[0][1]
+        if ref > 0:
+            move = (mid - ref) / ref * 1e4
+            if move <= -p.momentum_bps:
+                block_bid = True
+                why.append(f"падение {move:.1f} б.п.")
+            elif move >= p.momentum_bps:
+                block_ask = True
+                why.append(f"рост +{move:.1f} б.п.")
+        return block_bid, block_ask, ", ".join(why)

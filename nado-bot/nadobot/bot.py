@@ -11,12 +11,29 @@ from .config import Config
 from .exchange import Exchange
 from .ledger import Ledger
 from .notify import Notifier
-from .strategy import QuoteParams, VolatilityGuard, compute_quote, needs_requote
+from .strategy import FlowFilter, FlowParams, QuoteParams, VolatilityGuard, compute_quote, needs_requote
 
 log = logging.getLogger("nadobot")
 SNAPSHOT_EVERY_S = 300
 FUNDING_REFRESH_S = 600
 REJECTS_BEFORE_PAUSE = 3
+
+
+class OrderBudget:
+    """Ограничитель частоты executes: лимит Nado 10/с и 600/мин на кошелёк — держимся ниже."""
+
+    def __init__(self, per_10s: int = 60, per_min: int = 450):
+        self.per_10s, self.per_min = per_10s, per_min
+        self.ts: list[float] = []
+
+    def take(self, n: int) -> bool:
+        now = time.time()
+        self.ts = [t for t in self.ts if now - t < 60]
+        last10 = sum(1 for t in self.ts if now - t < 10)
+        if last10 + n > self.per_10s or len(self.ts) + n > self.per_min:
+            return False
+        self.ts.extend([now] * n)
+        return True
 
 
 class Bot:
@@ -52,6 +69,12 @@ class Bot:
         self.guards = {m.symbol: VolatilityGuard(cfg.vol_window_s, cfg.vol_max_move_bps, cfg.vol_pause_s)
                        for m in cfg.markets}
         self.last_mid: dict[str, float | None] = {m.symbol: None for m in cfg.markets}
+        fp = FlowParams(cfg.flow_window_s, cfg.flow_imbalance, cfg.flow_min_notional_usd,
+                        cfg.momentum_window_s, cfg.momentum_bps)
+        self.flows = {m.symbol: FlowFilter(fp) for m in cfg.markets}
+        self.last_sides: dict[str, tuple] = {m.symbol: () for m in cfg.markets}
+        self.budget = OrderBudget()
+        self.flow_blocks = 0
         self.rejects: dict[str, int] = {m.symbol: 0 for m in cfg.markets}
         self.paused_until: dict[str, float] = {m.symbol: 0.0 for m in cfg.markets}
         self.funding: dict[str, Decimal] = {}
@@ -247,12 +270,32 @@ class Bot:
         allow_long, allow_short = fr <= thr, fr >= -thr
 
         pos = self._positions.get(spec.product_id, Decimal(0))
-        open_n = 0 if self.cfg.dry_run else len(self.ex.open_orders(spec.product_id))
         q = compute_quote(spec, bid, ask, pos, p, allow_long, allow_short)
-        expected = int(q.bid_price is not None) + int(q.ask_price is not None)
+
+        if self.cfg.flow_filter and not q.close_position:
+            feed = getattr(self.ex, "feed", None)
+            trades = feed.trades(spec.product_id, now - self.cfg.flow_window_s) if feed else []
+            block_bid, block_ask, why = self.flows[sym].signal(now, mid, trades)
+            if block_bid and q.bid_price is not None:
+                q.bid_price, q.bid_size = None, Decimal(0)
+                q.reason = f"{q.reason}; bid снят: {why}"
+                self.flow_blocks += 1
+            if block_ask and q.ask_price is not None:
+                q.ask_price, q.ask_size = None, Decimal(0)
+                q.reason = f"{q.reason}; ask снят: {why}"
+                self.flow_blocks += 1
+
+        sides = (q.bid_price is not None, q.ask_price is not None)
+        open_orders = [] if self.cfg.dry_run else self.ex.open_orders(spec.product_id)
+        expected = sum(sides)
         if (not needs_requote(self.last_mid[sym], mid, self.cfg.requote_bps)
-                and open_n >= expected and not q.close_position):
+                and len(open_orders) >= expected and sides == self.last_sides[sym]
+                and not q.close_position):
             return
+        if not self.cfg.dry_run and not self.budget.take(1 + expected):
+            log.debug("%s: лимит частоты ордеров — пропускаю перестановку", sym)
+            return
+        self.last_sides[sym] = sides
 
         log.info("%s mid=%.2f pos=%s → bid %s x %s | ask %s x %s (%s)",
                  sym, mid, pos, q.bid_price, q.bid_size, q.ask_price, q.ask_size, q.reason)
@@ -299,6 +342,12 @@ class Bot:
 
     # ---------- цикл ----------
     def tick(self):
+        feed = getattr(self.ex, "feed", None)
+        if feed is not None and feed.pids:
+            try:
+                feed.refresh()  # не чаще min_interval_s: в сканере на всех ботов один запрос
+            except Exception as e:  # noqa: BLE001
+                log.warning("feed: %s", e)
         if self.user_paused:
             self.check_account()
             return

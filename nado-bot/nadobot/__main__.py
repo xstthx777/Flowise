@@ -7,6 +7,8 @@
   unlink          отвязать бот-ключ (через MetaMask)
   status          equity, позиции, linked signer, комиссии
   paper [reset]   ТЕСТ без кошелька: живые цены Nado, виртуальные деньги
+  scan [мин] [--top N] [--offsets 2,3,5] [--markets BTC-PERP,ETH-PERP] [--compare-flow]
+                  сканер рынков: какой рынок/отступ даёт самые дешёвые поинты
   run             запустить бота
   panic           снять все ордера и закрыть позиции
   report          затраты и цена поинта
@@ -165,6 +167,24 @@ def main(argv: list[str]):
         print(f"ТЕСТ без кошелька: сеть {cfg.mode}, старт {ex.start_balance}$, сейчас {ex.account()['equity']:.2f}$. "
               f"Ctrl+C — стоп, отчёт: nado paperreport")
         Bot(cfg, ex=ex, ledger=led).run()
+    elif cmd == "scan":
+        from .scanner import run_scan, summarize
+        minutes, top, offsets, only, cmp = 60.0, 12, (2.0, 3.0, 5.0), None, False
+        it = iter(args)
+        for a in it:
+            if a == "--top":
+                top = int(next(it))
+            elif a == "--offsets":
+                offsets = tuple(float(x) for x in next(it).split(","))
+            elif a == "--markets":
+                only = [x.strip() for x in next(it).split(",")]
+            elif a == "--compare-flow":
+                cmp = True
+            else:
+                minutes = float(a)
+        print(f"Сканирую {minutes:g} мин на живых данных ({cfg.mode}). Кошелёк не нужен, ордера не отправляются.")
+        res = run_scan(cfg, minutes, top, offsets, cmp, only, progress=print)
+        print(summarize(res))
     elif cmd == "paperreport":
         from .paper import make_paper
         ex, led = make_paper(cfg)

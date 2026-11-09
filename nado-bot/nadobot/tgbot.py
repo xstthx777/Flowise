@@ -14,7 +14,7 @@ import time
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from .config import ROOT, Config, load_config, set_config_value
+from .config import ROOT, Config, load_config, set_config_value, set_first_market
 from .exchange import Exchange
 from .ledger import Ledger
 from .link import is_link_done, link_url_params, start_link_server, submit_signature
@@ -29,7 +29,8 @@ MENU = [
     [{"text": "📊 Статус", "callback_data": "status"}, {"text": "📈 Отчёт", "callback_data": "report"}],
     [{"text": "▶️ Запустить", "callback_data": "run"}, {"text": "⏹ Остановить", "callback_data": "stop"}],
     [{"text": "🦊 Подключить MetaMask", "callback_data": "link"}, {"text": "⚙️ Режим", "callback_data": "mode"}],
-    [{"text": "🚨 Закрыть всё", "callback_data": "panic"}, {"text": "❓ Помощь", "callback_data": "help"}],
+    [{"text": "🔎 Сканер 60 мин", "callback_data": "scan"}, {"text": "🚨 Закрыть всё", "callback_data": "panic"}],
+    [{"text": "❓ Помощь", "callback_data": "help"}],
 ]
 
 HELP = """Команды:
@@ -42,6 +43,7 @@ HELP = """Команды:
 /flow 100 или /flow -50 — записать депозит/вывод
 /paper — тест без кошелька (живые цены, виртуальные деньги), /paper reset — сбросить, /paper off — реальный режим
 /dryrun on|off — режим «только считать» / реальные ордера
+/scan 60 — сканер рынков на 60 мин (какой рынок/отступ даёт самые дешёвые поинты), /scanstop
 /panic — снять ордера и закрыть позиции (с подтверждением)"""
 
 
@@ -68,6 +70,9 @@ class TgApp:
         self.inbox: "queue.Queue[dict]" = queue.Queue()
         self.link_job: dict | None = None  # {"unlink", "params", "until", "srv"}
         self.panic_armed_until = 0.0
+        self.scan_thread = None
+        self.scan_stop = False
+        self.scan_best = None
         self.last_tick = 0.0
 
     def _init_exchange(self, reset_paper: bool = False):
@@ -334,6 +339,53 @@ class TgApp:
         b.flatten("ручной panic из Telegram")
         self.say("Готово: ордера сняты, позиции закрыты (если были). Торговля выключена.", MENU)
 
+    # ---------- сканер ----------
+    def start_scan(self, minutes: float):
+        import threading
+
+        from .scanner import best_rows, run_scan, summarize
+
+        if self.scan_thread and self.scan_thread.is_alive():
+            return self.say("Сканер уже работает. /scanstop — остановить досрочно.")
+        self.scan_stop = False
+        cfg = load_config()
+
+        def job():
+            try:
+                res = run_scan(cfg, minutes, progress=self.say, stop_flag=lambda: self.scan_stop)
+                text = summarize(res)
+                ok = best_rows(res)
+                self.scan_best = (ok[0]["market"], ok[0]["offset_bps"], ok[0]["flow"]) if ok else None
+                btn = None
+                if self.scan_best:
+                    m, o, fl = self.scan_best
+                    btn = [[{"text": f"✅ Применить: {m} {o:g} б.п.", "callback_data": "scan_apply"}]]
+                self.say(text, btn)
+            except Exception as e:  # noqa: BLE001
+                log.exception("scan")
+                self.say(f"Сканер упал: {e}")
+
+        self.scan_thread = threading.Thread(target=job, daemon=True, name="scan")
+        self.scan_thread.start()
+        self.say(f"🔎 Сканер запущен на {minutes:g} мин: топ рынков Nado × отступы 2/3/5 б.п., виртуально. "
+                 "Торговлю не трогает. Пришлю рейтинг по окончании.")
+
+    def apply_scan(self):
+        if not self.scan_best:
+            return self.say("Нет результата сканера. Запусти /scan 60")
+        m, o, fl = self.scan_best
+        was = self.bot is not None
+        if was:
+            self.stop_trading("применяю результат сканера", save=False)
+        set_first_market(m, o)
+        set_config_value("flow_filter", "true" if fl == "on" else "false")
+        self.cfg = load_config()
+        if hasattr(self, "_specs_cache"):
+            del self._specs_cache
+        self.say(f"Записал в config.yaml: рынок {m}, отступ {o:g} б.п., фильтр потока {fl}.")
+        if was:
+            self.start_trading()
+
     # ---------- разбор команд ----------
     def handle(self, item: dict):
         if item["kind"] == "button":
@@ -387,6 +439,13 @@ class TgApp:
                 if self.bot is not None:  # не считать депозит/вывод дневной прибылью/убытком
                     self.bot.day_start_equity = (self.bot.day_start_equity or 0) + float(args[0])
                 self.say("Записал.")
+            elif cmd == "scan":
+                self.start_scan(float(args[0]) if args else 60)
+            elif cmd == "scanstop":
+                self.scan_stop = True
+                self.say("Останавливаю сканер, пришлю то, что успел набрать.")
+            elif cmd == "scan_apply":
+                self.apply_scan()
             elif cmd == "panic":
                 self.panic(False)
             elif cmd == "panic_yes":

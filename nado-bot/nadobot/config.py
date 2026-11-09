@@ -40,8 +40,8 @@ class Config:
     mode: str = "testnet"  # testnet | mainnet
     dry_run: bool = True
     subaccount_name: str = "default"
-    loop_interval_s: float = 3.0
-    requote_bps: float = 2.0
+    loop_interval_s: float = 1.0
+    requote_bps: float = 1.0
     order_ttl_s: int = 120
     vol_window_s: float = 60
     vol_max_move_bps: float = 40
@@ -53,6 +53,12 @@ class Config:
     reject_pause_s: float = 300
     mainnet_live_confirm: bool = False
     sign_page_url: str = DEFAULT_SIGN_PAGE
+    flow_filter: bool = True  # снимать сторону при одностороннем потоке/импульсе
+    flow_window_s: float = 15
+    flow_imbalance: float = 0.6
+    flow_min_notional_usd: float = 2000
+    momentum_window_s: float = 10
+    momentum_bps: float = 3
     paper: bool = False  # тестовый режим без кошелька
     paper_balance: float = 200
     markets: list[MarketCfg] = field(default_factory=list)
@@ -79,6 +85,24 @@ def set_config_value(key: str, value: str, path: Path = CONFIG_PATH) -> None:
     pat = re.compile(rf"^{re.escape(key)}:[^\n#]*", re.M)
     text = pat.sub(f"{key}: {value}", text, count=1) if pat.search(text) else text + f"\n{key}: {value}\n"
     path.write_text(text, encoding="utf-8")
+
+
+def set_first_market(symbol: str, offset_bps: float, path: Path = CONFIG_PATH) -> None:
+    """Меняет symbol и offset_bps ПЕРВОГО рынка в config.yaml, сохраняя комментарии."""
+    import re
+
+    text = path.read_text(encoding="utf-8-sig")
+    m = re.search(r"^markets:\s*\n(?:[ \t]*#.*\n)*([ \t]*)- symbol:[^\n#]*", text, re.M)
+    if not m:
+        raise ValueError("в config.yaml не найден блок markets")
+    start = m.start(0) + m.group(0).index("- symbol:")
+    text = text[:start] + f"- symbol: {symbol}" + text[m.end(0):]
+    rest = text[start:]
+    nxt = re.search(r"^[ \t]*- symbol:", rest[1:], re.M)
+    block_end = start + 1 + nxt.start() if nxt else len(text)
+    block = text[start:block_end]
+    block = re.sub(r"(offset_bps:)[^\n#]*", lambda mm: f"{mm.group(1)} {offset_bps:g}          ", block, count=1)
+    path.write_text(text[:start] + block + text[block_end:], encoding="utf-8")
 
 
 def load_config(path: str | Path = CONFIG_PATH) -> Config:

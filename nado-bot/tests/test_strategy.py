@@ -88,3 +88,32 @@ def test_vol_guard_and_requote():
     assert g.update(100, 100.5)
     assert not g.update(200, 100.5)
     assert needs_requote(None, 1, 2) and needs_requote(100, 100.03, 2) and not needs_requote(100, 100.01, 2)
+
+
+def test_flow_filter_blocks_against_one_sided_flow():
+    from nadobot.strategy import FlowFilter, FlowParams
+    f = FlowFilter(FlowParams(window_s=15, imbalance=0.6, min_notional_usd=1000, momentum_window_s=10, momentum_bps=3))
+    now = 1000.0
+    sells = [(i, now - 2, 100.0, -1, 900) for i in range(3)]  # 2700$ продаж
+    buys = [(9, now - 2, 100.0, 1, 200)]
+    bb, ba, why = f.signal(now, 100.0, sells + buys)
+    assert bb and not ba and "продажи" in why
+
+
+def test_flow_filter_ignores_noise_and_old_trades():
+    from nadobot.strategy import FlowFilter, FlowParams
+    f = FlowFilter(FlowParams(min_notional_usd=2000))
+    now = 1000.0
+    assert f.signal(now, 100.0, [(1, now - 1, 100.0, -1, 500)])[:2] == (False, False)  # мало объёма
+    assert f.signal(now, 100.0, [(1, now - 60, 100.0, -1, 50_000)])[:2] == (False, False)  # старая сделка
+
+
+def test_flow_filter_momentum():
+    from nadobot.strategy import FlowFilter, FlowParams
+    f = FlowFilter(FlowParams(momentum_window_s=10, momentum_bps=3, min_notional_usd=1e12))
+    assert f.signal(0, 100.0, [])[:2] == (False, False)
+    assert f.signal(10, 100.0, [])[:2] == (False, False)
+    bb, ba, _ = f.signal(20, 99.95, [])  # −5 б.п. за 10 с
+    assert bb and not ba
+    bb, ba, _ = f.signal(30, 100.03, [])  # +8 б.п.
+    assert ba and not bb

@@ -55,6 +55,8 @@ class Exchange:
             raise ValueError("NADO_OWNER должен быть адресом MetaMask, а не бот-кошелька")
         self.client = create_nado_client(NadoClientMode(mode), self.bot)
         self.engine = self.client.context.engine_client
+        from .feed import MarketFeed
+        self.feed = MarketFeed(self.client, [])
         self.sub_hex = subaccount_to_hex(self.owner, subaccount_name)
 
     # ---------- рынки ----------
@@ -72,9 +74,15 @@ class Exchange:
                 size_increment=from_x18(s.size_increment),
                 min_size=from_x18(s.min_size),
             )
+        self.feed.add([sp.product_id for sp in out.values()])
         return out
 
     def best_bid_ask(self, product_id: int) -> tuple[Decimal, Decimal]:
+        import time as _t
+        if product_id in self.feed.pids and _t.time() - self.feed.last_refresh < 2:
+            bid, ask = self.feed.bbo(product_id)
+            if bid > 0 and ask > 0:
+                return bid, ask
         p = self.engine.get_market_price(product_id)
         return from_x18(p.bid_x18), from_x18(p.ask_x18)
 
@@ -106,6 +114,9 @@ class Exchange:
 
     def funding_rate_daily(self, product_id: int) -> Decimal:
         """24-часовая ставка фандинга (доля, 0.0003 = 0.03%/сутки). >0 — лонги платят шортам."""
+        cached = self.feed.funding(product_id)
+        if cached is not None:
+            return cached
         fr = self.client.context.indexer_client.get_perp_funding_rate(product_id)
         return from_x18(fr.funding_rate_x18)
 

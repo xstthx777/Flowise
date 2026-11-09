@@ -12,8 +12,9 @@ DB = ROOT / "data" / "ledger.sqlite"
 
 class Ledger:
     def __init__(self, path: Path = DB):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)  # читает и Telegram-поток
+        if str(path) != ":memory:":
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(str(path), check_same_thread=False)  # читает и Telegram-поток
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS equity(ts REAL, equity REAL);

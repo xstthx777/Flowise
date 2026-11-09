@@ -21,6 +21,7 @@ def ex(tmp_path, monkeypatch):
     e._oid = e._fill_idx = 0
     e._last_funding_ts = time.time()
     e.start_balance = e.cash = D(200)
+    e.state_path = tmp_path / "state.json"
     e._trades = []
     e._recent_trades = lambda pid: e._trades
     e.engine_bbo = lambda pid: (D(74999), D(75001))

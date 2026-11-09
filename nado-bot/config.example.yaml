@@ -10,8 +10,8 @@ mode: mainnet
 dry_run: true
 subaccount_name: default
 
-loop_interval_s: 3        # как часто проверять рынок
-requote_bps: 2            # переставлять ордера, если mid сдвинулся на 0.02%
+loop_interval_s: 1        # как часто проверять рынок (лимиты Nado это позволяют)
+requote_bps: 1            # переставлять ордера, если mid сдвинулся на 0.01%
 order_ttl_s: 120          # ордер сам истечёт через 2 мин, даже если бот упадёт
 
 # Пауза при резком движении: >0.4% за 60 с → снять ордера на 2 мин
@@ -27,6 +27,16 @@ funding_max_daily: 0.0005
 fills_sync_s: 60          # как часто подтягивать свои сделки для отчёта
 reject_pause_s: 300       # пауза рынка после 3 отказов подряд (выходные: soft_reduce_only)
 
+# Фильтр потока: не стоять на пути одностороннего движения.
+# Если в последних сделках (flow_window_s) продажи тейкеров ≥ flow_imbalance от объёма — снимаем bid,
+# покупки — снимаем ask. Если цена за momentum_window_s сходила на ≥ momentum_bps — то же самое.
+flow_filter: true
+flow_window_s: 15
+flow_imbalance: 0.6
+flow_min_notional_usd: 2000
+momentum_window_s: 10
+momentum_bps: 3
+
 # Защита от случайного запуска на реальных деньгах:
 # mainnet + dry_run: false работает ТОЛЬКО если здесь true
 mainnet_live_confirm: false
@@ -34,7 +44,7 @@ mainnet_live_confirm: false
 markets:
   - symbol: BTC-PERP
     order_size_usd: 120    # размер котировки в $ (минимум биржи — 100$)
-    offset_bps: 4          # отступ от mid (0.04%)
+    offset_bps: 4          # отступ от mid в б.п. (4 = 0.04%); подбери сканером
     max_position_usd: 250  # дальше — котируем только на сокращение позиции
     hard_position_usd: 500 # тут — принудительное закрытие
     skew_bps: 3            # сдвиг котировок при полном инвентаре
